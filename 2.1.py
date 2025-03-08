@@ -43,56 +43,79 @@ nuclide_list = [
 def main():
     print("=== Mean Free Path Calculator ===")
 
-    # 1) Ask how many nuclides
-    num_str = input("How many nuclides in your mixture? ")
-    try:
-        num_nuclides = int(num_str)
-    except ValueError:
-        num_nuclides = 1
-        print("Invalid input. Defaulting to 1.")
-    if num_nuclides <= 0:
-        print("Number of nuclides must be > 0. Defaulting to 1.")
-        num_nuclides = 1
-
-    # Build a lookup dict for known nuclides
-    known_dict = {nuc['name']: nuc for nuc in nuclide_list}
-    chosen_nuclides = []
-
-    # 2) Gather user inputs for each nuclide
-    for i in range(num_nuclides):
-        print(f"\n--- Nuclide {i+1} of {num_nuclides} ---")
-        nuc_name = input("  Which nuclide? (e.g. 'U235', 'U238', 'graphite'): ")
-        if nuc_name not in known_dict:
-            print(f"  '{nuc_name}' not found. Defaulting to 'U235'.")
-            nuc_name = 'U235'
-
-        mf_str = input("  Mass fraction (0 < mf < 1): ")
+    # 0) ask for manual input
+    manual = input("Do you want to manually input nuclides? (y/n): ")
+    if manual.lower().startswith('y'):
+        
+        # 1) Ask how many nuclides
+        num_str = input("How many nuclides in your mixture? ")
         try:
-            mf = float(mf_str)
+            num_nuclides = int(num_str)
         except ValueError:
-            mf = 0.0
-            print("  Invalid fraction. Defaulting to 0.0")
+            num_nuclides = 1
+            print("Invalid input. Defaulting to 1.")
+        if num_nuclides <= 0:
+            print("Number of nuclides must be > 0. Defaulting to 1.")
+            num_nuclides = 1
 
-        base_data = known_dict[nuc_name]
-        nuc_dict = {
-            'name': base_data['name'],
-            'molar_mass': base_data['molar_mass'],
-            'density': base_data['density'],
-            'cross_sections': base_data['cross_sections'],
-            'mass_fraction': mf
-        }
-        chosen_nuclides.append(nuc_dict)
+        # Build a lookup dict for known nuclides
+        known_dict = {nuc['name']: nuc for nuc in nuclide_list}
+        chosen_nuclides = []
 
-    # Check total fraction
-    total_fraction = sum(nuc['mass_fraction'] for nuc in chosen_nuclides)
-    if not math.isclose(total_fraction, 1.0, rel_tol=1e-5):
-        print(f"Warning: total mass fraction = {total_fraction:.3f}, not 1.0!")
-        sys.exit("Exiting program due to invalid mass fraction sum.")
+        # 2) Gather user inputs for each nuclide
+        for i in range(num_nuclides):
+            print(f"\n--- Nuclide {i+1} of {num_nuclides} ---")
+            nuc_name = input("  Which nuclide? (e.g. 'U235', 'U238', 'graphite'): ")
+            if nuc_name not in known_dict:
+                print(f"  '{nuc_name}' not found. Defaulting to 'U235'.")
+                nuc_name = 'U235'
 
-    # 3) Ask for energy regime
-    regime = input("\nEnergy regime? ('thermal' or 'fast'): ")
-    if regime not in ["thermal", "fast"]:
-        print("Invalid choice. Defaulting to 'thermal'.")
+            mf_str = input("  Mass fraction (0 < mf < 1): ")
+            try:
+                mf = float(mf_str)
+            except ValueError:
+                mf = 0.0
+                print("  Invalid fraction. Defaulting to 0.0")
+
+            base_data = known_dict[nuc_name]
+            nuc_dict = {
+                'name': base_data['name'],
+                'molar_mass': base_data['molar_mass'],
+                'density': base_data['density'],
+                'cross_sections': base_data['cross_sections'],
+                'mass_fraction': mf
+            }
+            chosen_nuclides.append(nuc_dict)
+        
+        # Check total fraction
+        total_fraction = sum(nuc['mass_fraction'] for nuc in chosen_nuclides)
+        if not math.isclose(total_fraction, 1.0, rel_tol=1e-5):
+            print(f"Warning: total mass fraction = {total_fraction:.3f}, not 1.0!")
+            sys.exit("Exiting program due to invalid mass fraction sum.")
+
+        # 3) Ask for energy regime
+        regime = input("\nEnergy regime? ('thermal' or 'fast'): ")
+        if regime not in ["thermal", "fast"]:
+            print("Invalid choice. Defaulting to 'thermal'.")
+            regime = "thermal"
+
+    else:
+        num_nuclides = 2
+        chosen_nuclides = [
+            {
+                'name': 'U235', 
+                'molar_mass': 235.0, 
+                'density': 19.1, 
+                'cross_sections': {'thermal': {'sigma_s': 10.0, 'sigma_a': 99.0}, 'fast': {'sigma_s': 4.0, 'sigma_a': 0.09}}, 
+                'mass_fraction': 0.011
+                }, 
+            {
+                'name': 'graphite', 
+                'molar_mass': 12.0, 
+                'density': 2.267, 
+                'cross_sections': {'thermal': {'sigma_s': 5.0, 'sigma_a': 0.02}, 'fast': {'sigma_s': 2.0, 'sigma_a': 1e-05}}, 
+                'mass_fraction': 0.989}
+        ]
         regime = "thermal"
 
     # 4) Create the material data (Sigma_tot, etc.)
@@ -139,8 +162,8 @@ def main():
             num_neutrons = 1000 
 
         # Cylinder geometry
-        radius = 20.0
-        height = 20.0
+        radius = 10.0
+        height = 10.0
 
         # Run the random walk. 
         # NOTE: your function should return a list of (trajectory, status) pairs
@@ -162,17 +185,13 @@ def main():
         print("Done.")
 
         # Plot color-coded trajectories
-        sim.plot_trajectories_3d(results, radius, height, num_to_plot=(num_neutrons if num_neutrons < 1000 else 1000))
+        #sim.plot_trajectories_3d(results, radius, height, num_to_plot=(num_neutrons if num_neutrons < 1000 else 1000))
 
         # Plot a bar plot of the absorbed ticks
-        plt.figure()
-        plt.hist(absorbed_tick, bins=range(min(absorbed_tick), max(absorbed_tick) + 1), edgecolor='black')
-        plt.xlabel('Tick')
-        plt.ylabel('Count')
-        plt.title('Distribution of Absorbed Ticks')
-        plt.show()
+        #sim.count_absorbed_tick(absorbed_tick)
+                
+        sim.verify_end_distribution(results, radius, height, num_neutrons, num_bins=60)
 
-        # add a banana
         
 
 
