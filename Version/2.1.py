@@ -5,6 +5,9 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import neutron_packages.simulation as sim
 
+###############################################################################
+# 2) Cross-Section / Material Data
+###############################################################################
 
 nuclide_list = [
     {
@@ -39,7 +42,9 @@ nuclide_list = [
     }
 ]
 
-
+###############################################################################
+# 4) Main Program
+###############################################################################
 def main():
     print("=== Mean Free Path Calculator ===")
 
