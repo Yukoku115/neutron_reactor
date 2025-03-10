@@ -182,8 +182,7 @@ def main():
         absorbed_count = sum(1 for (_, status) in results if status == "absorbed")
         print(f"Neutrons escaped:   {escaped_count}")
         print(f"Neutrons absorbed: {absorbed_count}")
-        print("Done.")
-
+       
         # Plot color-coded trajectories
         #sim.plot_trajectories_3d(results, radius, height, num_to_plot=(num_neutrons if num_neutrons < 1000 else 1000))
 

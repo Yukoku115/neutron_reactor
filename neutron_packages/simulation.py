@@ -48,6 +48,9 @@ def create_material_data(material_name, density, nuclide_list, energy_regime='th
     """
     N_A = 6.02214076e23  # atoms/mol
     Sigma_tot = 0.0
+    total_scatter = 0.0
+    total_absorb = 0.0
+    total_fission = 0.0
     output_nuclides = []
 
     for nuc in nuclide_list:
@@ -59,25 +62,37 @@ def create_material_data(material_name, density, nuclide_list, energy_regime='th
         # Get cross sections for the chosen regime
         sigma_s_barns = nuc["cross_sections"][energy_regime]["sigma_s"]
         sigma_a_barns = nuc["cross_sections"][energy_regime]["sigma_a"]
+        sigma_f_barns = nuc["cross_sections"][energy_regime].get("sigma_f", 0.0)
 
         # barns -> cm^2
         sigma_s_cm2 = sigma_s_barns * 1e-24
-        sigma_a_cm2 = sigma_a_barns * 1e-24
+        sigma_c_cm2 = sigma_a_barns * 1e-24
+        sigma_f_cm2   = sigma_f_barns * 1e-24
 
         # Number density (naive approach)
         N_i = (nuc_density * mass_fraction / molar_mass) * N_A
 
         # Macroscopic cross sections
         Sigma_s = sigma_s_cm2 * N_i
-        Sigma_a = sigma_a_cm2 * N_i
+        Sigma_c = sigma_c_cm2 * N_i
+        Sigma_f = sigma_f_cm2 * N_i
+
+        Sigma_a = Sigma_c + Sigma_f
         Sigma_i = Sigma_s + Sigma_a
 
-        Sigma_tot += Sigma_i
+        total_scatter += Sigma_s
+        total_absorb  += Sigma_a
+        total_fission += Sigma_f
+        Sigma_tot     += Sigma_i
+
+        
         output_nuclides.append({
             "name": name,
             "mass_fraction": mass_fraction,
             "Sigma_s": Sigma_s,
-            "Sigma_a": Sigma_a,
+            "Sigma_c": Sigma_c,  # capture
+            "Sigma_f": Sigma_f,
+            "Sigma_a": Sigma_a,  # total absorption
             "Sigma_i": Sigma_i
         })
 
@@ -86,11 +101,14 @@ def create_material_data(material_name, density, nuclide_list, energy_regime='th
         mfp = 1.0 / Sigma_tot
     else:
         mfp = math.inf
-
-    return {
+    return{
+        "material_name": material_name,
         "Sigma_tot": Sigma_tot,
         "mean_free_path": mfp,
-        "nuclides": output_nuclides
+        "nuclides": output_nuclides,
+        "Sigma_s_total": total_scatter,
+        "Sigma_a_total": total_absorb,
+        "Sigma_f_total": total_fission
     }
 
 ###############################################################################
@@ -267,7 +285,8 @@ def volume_shell(a, b, R, H):
     vol, err = quad(integrand, z_lower, z_upper)
     return vol
 
-def verify_end_distribution(results, radius, height, particle_num, num_bins=50):
+def verify_end_distribution(results, radius, height, particle_num, num_bins=50, generation =1):
+
 
     # Compute particle density in the cylinder:
     # density = particle_num / (Volume of cylinder)
@@ -312,15 +331,15 @@ def verify_end_distribution(results, radius, height, particle_num, num_bins=50):
                     ecolor='black', capsize=5)
     
     # Plot density line on escaped subplot
-    axes[0].axhline(density, color='blue', linestyle='--', label='Density')
+    #axes[0].axhline(density, color='blue', linestyle='--', label='Density')
 
     # Compute the average histogram height (excluding empty bins) for escaped neutrons
     nonempty = escaped_counts > 0
     if np.any(nonempty):
         avg_escaped_height = np.mean(escaped_bin_heights[nonempty])
-        axes[0].axhline(avg_escaped_height, color='red', linestyle=':', label='Avg Escaped Height')
+        #axes[0].axhline(avg_escaped_height, color='red', linestyle=':', label='Avg Escaped Height')
 
-    axes[0].set_title("Final Radial Distribution (Escaped)", fontsize=24)
+    axes[0].set_title(f"Gen {generation}: Final Radial Distribution (Escaped)", fontsize=24)
     axes[0].set_xlabel("Radius (cm)", fontsize=20)
     axes[0].set_ylabel("density", fontsize=20)
     axes[0].legend()
@@ -352,10 +371,196 @@ def verify_end_distribution(results, radius, height, particle_num, num_bins=50):
         avg_absorbed_height = np.mean(absorbed_bin_heights[nonempty_abs])
         axes[1].axhline(avg_absorbed_height, color='red', linestyle=':', label='Avg Absorbed Height')
 
-    axes[1].set_title("Final Radial Distribution (Absorbed)", fontsize=24)
+    axes[1].set_title(f"Gen {generation}: Final Radial Distribution (Absorbed)", fontsize=24)
     axes[1].set_xlabel("Radius (cm)", fontsize=20)
     axes[1].set_ylabel("density", fontsize=20)
     axes[1].legend()
 
     plt.tight_layout()
     plt.show()
+
+  
+
+def sample_fission_events(
+    absorbed_count: int,
+    p_fiss_in_abs: float,
+    average_nu: float
+):
+    """
+    Randomly determines how many of the absorbed neutrons cause fission vs. capture,
+    and how many new neutrons are produced.
+
+    Parameters
+    ----------
+    absorbed_count : int
+        Number of neutrons absorbed in this generation.
+    p_fiss_in_abs : float
+        Probability that an absorption is actually a fission event (conditional on absorption).
+        Typically p_fiss_in_abs = Sigma_f / Sigma_a or P_fiss / P_abs in your code.
+    average_nu : float
+        Average number of new neutrons produced per fission.
+
+    Returns
+    -------
+    fission_count : int
+        Number of absorbed neutrons that caused fission.
+    capture_count : int
+        Number of absorbed neutrons that were captured (no fission).
+    new_neutrons : int
+        Number of new neutrons produced by fission.
+    """
+    if absorbed_count <= 0:
+        return 0, 0, 0
+
+    # 1) Draw random numbers for each absorbed neutron
+    random_vals = np.random.rand(absorbed_count)
+
+    # 2) Compare each random value to p_fiss_in_abs to decide fission vs. capture
+    #    If random < p_fiss_in_abs => fission, else capture
+    fission_mask = (random_vals < p_fiss_in_abs)
+    fission_count = np.sum(fission_mask)
+    capture_count = absorbed_count - fission_count
+
+    # 3) Compute how many new neutrons are produced by these fissions
+    #    You can do a simple rounding or a Poisson-like approach.
+    #    Here, we'll do a simple integer rounding: new_neutrons = sum of n_i
+    #    where n_i is around average_nu for each fission. For demonstration,
+    #    we can do a single integer round: new_neutrons = int( fission_count * average_nu ).
+    new_neutrons = int(round(fission_count * average_nu))
+
+    return fission_count, capture_count, new_neutrons
+
+"""
+def run_multi_generations(
+    radius, height,
+    initial_num_neutrons,
+    P_scat,
+    P_abs,
+    P_fiss_in_abs,
+    mean_free_path,
+    average_nu,
+    num_generations
+):
+   
+
+    current_population = initial_num_neutrons
+    generation_data = []
+
+    for gen_index in range(1, num_generations+1):
+        if current_population <= 0:
+            print(f"No neutrons left for Generation {gen_index}. Stopping.")
+            break
+
+        # 1) Single-generation transport
+        results, absorbed_tick = sim.simulate_neutron_transport(
+            radius=radius,
+            height=height,
+            num_neutrons=current_population,
+            P_scat=P_scat,
+            P_abs=P_abs,
+            mean_free_path=mean_free_path
+        )
+
+        # 2) Tally results
+        escaped_count = sum(1 for (_, status) in results if status == "escaped")
+        absorbed_count = sum(1 for (_, status) in results if status == "absorbed")
+
+        # 3) Decide how many are fission vs. capture
+        fission_count, capture_count, new_neutrons = sample_fission_events(
+            absorbed_count=absorbed_count,
+            p_fiss_in_abs=P_fiss_in_abs,
+            average_nu=average_nu
+        )
+
+        print(f"\nGEN {gen_index}: Started with {current_population} neutrons.")
+        print(f"  => Escaped={escaped_count}, Absorbed={absorbed_count}")
+        print(f"  => Fissions={fission_count}, Captures={capture_count}, new_neutrons={new_neutrons}")
+
+        # 4) Prepare for next generation
+        current_population = new_neutrons
+
+        # Store data for analysis
+        generation_data.append({
+            "generation": gen_index,
+            "start_pop": current_population,
+            "escaped": escaped_count,
+            "absorbed": absorbed_count,
+            "fissions": fission_count,
+            "captures": capture_count,
+            "new_neutrons": new_neutrons,
+            "results": results,
+            "absorbed_tick": absorbed_tick
+        })
+
+    return generation_data
+"""
+
+def run_multiple_generations(
+    radius,
+    height,
+    initial_num_neutrons,
+    P_scat,
+    P_abs,
+    p_fiss_in_abs,
+    average_nu,
+    mean_free_path
+):
+    """
+    Runs multiple generations in a loop. After each generation,
+    it prompts the user if they want to continue.
+    """
+
+    generation = 1
+    current_population = initial_num_neutrons
+
+    while True:
+        if current_population <= 0:
+            print(f"No neutrons left for Generation {generation}. Stopping.")
+            break
+
+        # 1) Run single-generation transport
+        results, absorbed_tick = simulate_neutron_transport(
+            radius=radius,
+            height=height,
+            num_neutrons=current_population,
+            P_scat=P_scat,
+            P_abs=P_abs,
+            mean_free_path=mean_free_path
+        )
+        print(f"\nGeneration {generation} simulation complete.")
+
+        # 2) Tally results
+        escaped_count = sum(1 for (_, status) in results if status == "escaped")
+        absorbed_count = sum(1 for (_, status) in results if status == "absorbed")
+        print(f"GEN {generation} => Started with {current_population}, "
+              f"Escaped={escaped_count}, Absorbed={absorbed_count}")
+
+        # 3) Sample fission events among absorbed
+        fission_count, capture_count, new_neutrons = sample_fission_events(
+            absorbed_count=absorbed_count,
+            p_fiss_in_abs=p_fiss_in_abs,
+            average_nu=average_nu
+        )
+        print(f"  => Fissions={fission_count}, Captures={capture_count}, "
+              f"New neutrons from fission={new_neutrons}")
+
+        # 4) Plot distribution if desired
+        verify_end_distribution(
+            results, radius, height, current_population, num_bins=60, generation=generation
+        )
+
+        # 5) Compute multiplication factor for this generation
+        k_gen = 0.0
+        if current_population > 0:
+            k_gen = new_neutrons / current_population
+        print(f"k for Generation {generation} = {k_gen:.3f}")
+
+        # 6) Prompt if user wants another generation
+        ans = input(f"\nDo you want to run Generation {generation+1}? (y/n): ")
+        if ans.lower().startswith('y'):
+            current_population = new_neutrons
+            generation += 1
+        else:
+            print("Done.")
+            break
+
